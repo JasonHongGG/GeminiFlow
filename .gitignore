@@ -1,5 +1,13 @@
-/input/
-/output/
+/input/*
+!/input/.gitkeep
+
+/output/*
+!/output/.gitkeep
+
+!/output/image/
+
+/output/image/*
+!/output/image/.gitkeep
 /.venv/
 
 
@@ -26,4 +34,5 @@ htmlcov/
 .DS_Store
 
 
-/user_cookies/
+/user_cookies/*
+!/user_cookies/.gitkeep
