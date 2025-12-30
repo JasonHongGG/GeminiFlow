@@ -10,8 +10,7 @@ python -m pip install -r requirements.txt
 ## Run
 
 ```bash
-cd projects/gemini_flow
-python cli.py chat -c ../../user_cookies "用繁中回覆一句：測試成功"
+python cli.py chat -c user_cookies "用繁中回覆一句：測試成功"
 ```
 
 Choose model:
@@ -25,6 +24,21 @@ Debug mode (prints token/response previews):
 
 ```bash
 python cli.py chat --debug -c user_cookies "hello"
+```
+
+## Image output directory
+
+When using an `*-image` model, generated images are saved under `output/image/` by default.
+
+You can override the output directory with an environment variable:
+
+- `GEMINI_FLOW_IMAGE_DIR`: absolute path or relative path (relative to current working directory)
+
+Example (Windows PowerShell):
+
+```powershell
+$env:GEMINI_FLOW_IMAGE_DIR = "output/image"
+python cli.py chat -m gemini-3-pro-image -c user_cookies "Generate an image of a cute shiba inu."
 ```
 
 ## Cookie file format

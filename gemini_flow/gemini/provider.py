@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import base64
+import os
 import sys
+import time
+from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
 import aiohttp
@@ -13,6 +17,7 @@ from .protocol import (
     REQUEST_URL,
     GeminiRequest,
     REQUIRED_COOKIE_NAME,
+    extract_image_candidates_from_raw_line,
     extract_text_delta_from_raw_line,
     extract_tokens,
 )
@@ -77,11 +82,71 @@ class GeminiWebProvider(ChatProvider):
             uploads=uploads,
         )
 
+        is_image_model = model.endswith("-image")
+
+        def _get_image_output_dir() -> Path:
+            configured = os.environ.get("GEMINI_FLOW_IMAGE_DIR")
+            base = Path(configured) if configured else Path("output") / "image"
+            out = base.expanduser()
+            if not out.is_absolute():
+                out = (Path.cwd() / out).resolve()
+            out.mkdir(parents=True, exist_ok=True)
+            return out
+
+        async def _save_image_candidate(
+            *,
+            client: aiohttp.ClientSession,
+            candidate: str,
+            out_dir: Path,
+            suffix: str,
+        ) -> Optional[Path]:
+            if candidate.startswith("data:image/"):
+                try:
+                    header, b64 = candidate.split(",", 1)
+                    mime = header.split(";", 1)[0].split(":", 1)[1]
+                    ext = {
+                        "image/png": "png",
+                        "image/jpeg": "jpg",
+                        "image/webp": "webp",
+                    }.get(mime, "png")
+                    data = base64.b64decode(b64)
+                except Exception:
+                    return None
+
+                out_path = out_dir / f"{suffix}.{ext}"
+                out_path.write_bytes(data)
+                return out_path
+
+            if not (candidate.startswith("https://") or candidate.startswith("http://")):
+                return None
+
+            try:
+                async with client.get(candidate, proxy=proxy) as resp:
+                    if resp.status >= 400:
+                        return None
+                    data = await resp.read()
+                    content_type = (resp.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            except Exception:
+                return None
+
+            ext = {
+                "image/png": "png",
+                "image/jpeg": "jpg",
+                "image/webp": "webp",
+            }.get(content_type, "png")
+            out_path = out_dir / f"{suffix}.{ext}"
+            out_path.write_bytes(data)
+            return out_path
+
         async def gen():
             emitted_any = False
             preview = ""
             buffer = ""
             last_content = ""
+            seen_images: set[str] = set()
+            out_dir = _get_image_output_dir() if is_image_model else Path.cwd()
+            out_prefix = f"gemini_{model}_{int(time.time())}"
+            out_index = 0
 
             async with aiohttp.ClientSession(headers=DEFAULT_HEADERS, cookies=cookies) as client:
                 try:
@@ -111,6 +176,25 @@ class GeminiWebProvider(ChatProvider):
                             while "\n" in buffer:
                                 raw_line, buffer = buffer.split("\n", 1)
                                 raw_line = raw_line.rstrip("\r")
+
+                                if is_image_model:
+                                    for candidate in extract_image_candidates_from_raw_line(raw_line):
+                                        if candidate in seen_images:
+                                            continue
+                                        seen_images.add(candidate)
+                                        out_index += 1
+                                        saved = await _save_image_candidate(
+                                            client=client,
+                                            candidate=candidate,
+                                            out_dir=out_dir,
+                                            suffix=f"{out_prefix}_{out_index}",
+                                        )
+                                        emitted_any = True
+                                        if saved:
+                                            yield f"[image saved] {saved}\n"
+                                        else:
+                                            yield f"[image] {candidate}\n"
+
                                 delta, last_content = extract_text_delta_from_raw_line(
                                     raw_line, last_content
                                 )
@@ -123,6 +207,25 @@ class GeminiWebProvider(ChatProvider):
 
             if buffer.strip():
                 raw_line = buffer.rstrip("\r")
+
+                if is_image_model:
+                    for candidate in extract_image_candidates_from_raw_line(raw_line):
+                        if candidate in seen_images:
+                            continue
+                        seen_images.add(candidate)
+                        out_index += 1
+                        saved = await _save_image_candidate(
+                            client=client,
+                            candidate=candidate,
+                            out_dir=out_dir,
+                            suffix=f"{out_prefix}_{out_index}",
+                        )
+                        emitted_any = True
+                        if saved:
+                            yield f"[image saved] {saved}\n"
+                        else:
+                            yield f"[image] {candidate}\n"
+
                 delta, last_content = extract_text_delta_from_raw_line(raw_line, last_content)
                 if delta:
                     emitted_any = True
