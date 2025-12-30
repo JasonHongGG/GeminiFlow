@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -84,6 +85,41 @@ class GeminiWebProvider(ChatProvider):
 
         is_image_model = model.endswith("-image")
 
+        _CONTROL_RE = re.compile(r"[\x00-\x1F\x7F\u200B\u200C\u200D\uFEFF]")
+
+        def _normalize_candidate(value: str) -> str:
+            value = value.strip()
+            value = _CONTROL_RE.sub("", value)
+            return value
+
+        def _is_placeholder_or_input_image(url: str) -> bool:
+            # Placeholder token, not a real downloadable image.
+            if url.startswith("http://googleusercontent.com/image_generation_content/"):
+                return True
+            # Echoed input/uploaded image reference (not the generated output).
+            if "lh3.googleusercontent.com/gg/" in url and "lh3.googleusercontent.com/gg-dl/" not in url:
+                return True
+            return False
+
+        def _is_noise_text_in_image_mode(text: str) -> bool:
+            normalized = _normalize_candidate(text)
+            if not normalized:
+                return True
+            if _is_placeholder_or_input_image(normalized):
+                return True
+            # Some image responses include media URLs in the text delta stream.
+            if normalized.startswith("http://") or normalized.startswith("https://"):
+                if any(
+                    host in normalized
+                    for host in [
+                        "googleusercontent.com/image_generation_content/",
+                        "lh3.googleusercontent.com/gg-dl/",
+                        "lh3.googleusercontent.com/gg/",
+                    ]
+                ):
+                    return True
+            return False
+
         def _get_image_output_dir() -> Path:
             configured = os.environ.get("GEMINI_FLOW_IMAGE_DIR")
             base = Path(configured) if configured else Path("output") / "image"
@@ -143,7 +179,7 @@ class GeminiWebProvider(ChatProvider):
             preview = ""
             buffer = ""
             last_content = ""
-            seen_images: set[str] = set()
+            final_image_candidate: Optional[str] = None
             out_dir = _get_image_output_dir() if is_image_model else Path.cwd()
             out_prefix = f"gemini_{model}_{int(time.time())}"
             out_index = 0
@@ -179,28 +215,19 @@ class GeminiWebProvider(ChatProvider):
 
                                 if is_image_model:
                                     for candidate in extract_image_candidates_from_raw_line(raw_line):
-                                        if candidate in seen_images:
+                                        normalized = _normalize_candidate(candidate)
+                                        if not normalized or _is_placeholder_or_input_image(normalized):
                                             continue
-                                        seen_images.add(candidate)
-                                        out_index += 1
-                                        saved = await _save_image_candidate(
-                                            client=client,
-                                            candidate=candidate,
-                                            out_dir=out_dir,
-                                            suffix=f"{out_prefix}_{out_index}",
-                                        )
-                                        emitted_any = True
-                                        if saved:
-                                            yield f"[image saved] {saved}\n"
-                                        else:
-                                            yield f"[image] {candidate}\n"
+                                        # Keep only the latest candidate; save once at the end.
+                                        final_image_candidate = normalized
 
                                 delta, last_content = extract_text_delta_from_raw_line(
                                     raw_line, last_content
                                 )
                                 if delta:
-                                    emitted_any = True
-                                    yield delta
+                                    if not is_image_model or not _is_noise_text_in_image_mode(delta):
+                                        emitted_any = True
+                                        yield delta
 
                 except aiohttp.ClientError as e:
                     raise RequestError(f"StreamGenerate request failed: {e}") from e
@@ -210,26 +237,33 @@ class GeminiWebProvider(ChatProvider):
 
                 if is_image_model:
                     for candidate in extract_image_candidates_from_raw_line(raw_line):
-                        if candidate in seen_images:
+                        normalized = _normalize_candidate(candidate)
+                        if not normalized or _is_placeholder_or_input_image(normalized):
                             continue
-                        seen_images.add(candidate)
-                        out_index += 1
-                        saved = await _save_image_candidate(
-                            client=client,
-                            candidate=candidate,
-                            out_dir=out_dir,
-                            suffix=f"{out_prefix}_{out_index}",
-                        )
-                        emitted_any = True
-                        if saved:
-                            yield f"[image saved] {saved}\n"
-                        else:
-                            yield f"[image] {candidate}\n"
+                        final_image_candidate = normalized
 
                 delta, last_content = extract_text_delta_from_raw_line(raw_line, last_content)
                 if delta:
-                    emitted_any = True
-                    yield delta
+                    if not is_image_model or not _is_noise_text_in_image_mode(delta):
+                        emitted_any = True
+                        yield delta
+
+            if is_image_model and final_image_candidate:
+                out_index += 1
+                # NOTE: At this point the streaming client session has been closed.
+                # Use a fresh session for downloading the final image.
+                async with aiohttp.ClientSession(headers=DEFAULT_HEADERS, cookies=cookies) as download_client:
+                    saved = await _save_image_candidate(
+                        client=download_client,
+                        candidate=final_image_candidate,
+                        out_dir=out_dir,
+                        suffix=f"{out_prefix}_{out_index}",
+                    )
+                emitted_any = True
+                if saved:
+                    yield f"[image saved] {saved}\n"
+                else:
+                    yield f"[image] {final_image_candidate}\n"
 
             if not emitted_any:
                 if debug and preview:

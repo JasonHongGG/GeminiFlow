@@ -26,21 +26,6 @@ Debug mode (prints token/response previews):
 python cli.py chat --debug -c user_cookies "hello"
 ```
 
-## Image output directory
-
-When using an `*-image` model, generated images are saved under `output/image/` by default.
-
-You can override the output directory with an environment variable:
-
-- `GEMINI_FLOW_IMAGE_DIR`: absolute path or relative path (relative to current working directory)
-
-Example (Windows PowerShell):
-
-```powershell
-$env:GEMINI_FLOW_IMAGE_DIR = "output/image"
-python cli.py chat -m gemini-3-pro-image -c user_cookies "Generate an image of a cute shiba inu."
-```
-
 ## Cookie file format
 
 The cookies directory should contain one or more `*.json` files exported from Chrome/extensions.
