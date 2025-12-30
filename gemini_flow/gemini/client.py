@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from ..cookies import load_google_cookies
+from ..playwright_cookies import ensure_playwright_cookies
 from ..types import AsyncTextStream
 from .provider import GeminiWebProvider
 
@@ -28,20 +29,54 @@ class GeminiWebClient:
         images: Optional[Sequence[Path]] = None,
         proxy: Optional[str] = None,
         debug: bool = False,
+        auto_refresh_cookies: bool = True,
     ) -> AsyncTextStream:
-        cookies = load_google_cookies(cookies_dir)
+        async def _refresh_cookies() -> None:
+            await ensure_playwright_cookies(
+                cookies_dir=cookies_dir,
+                debug=debug,
+            )
+
+        async def _load_or_refresh() -> dict:
+            try:
+                return load_google_cookies(cookies_dir)
+            except Exception:
+                if not auto_refresh_cookies:
+                    raise
+                await _refresh_cookies()
+                return load_google_cookies(cookies_dir)
+
+        cookies = await _load_or_refresh()
         image_payload = None
         if images:
             image_payload = []
             for path in images:
                 data = path.read_bytes()
                 image_payload.append((data, path.name))
-        return await self._provider.stream_chat(
-            model=model,
-            prompt=prompt,
-            cookies=cookies,
-            images=image_payload,
-            language=language,
-            proxy=proxy,
-            debug=debug,
-        )
+
+        try:
+            return await self._provider.stream_chat(
+                model=model,
+                prompt=prompt,
+                cookies=cookies,
+                images=image_payload,
+                language=language,
+                proxy=proxy,
+                debug=debug,
+            )
+        except Exception:
+            if not auto_refresh_cookies:
+                raise
+
+            # Token fetch commonly fails when cookies expire. Refresh and retry once.
+            await _refresh_cookies()
+            cookies = load_google_cookies(cookies_dir)
+            return await self._provider.stream_chat(
+                model=model,
+                prompt=prompt,
+                cookies=cookies,
+                images=image_payload,
+                language=language,
+                proxy=proxy,
+                debug=debug,
+            )

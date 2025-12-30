@@ -19,6 +19,7 @@ class Gemini:
         language: str = "zh-TW",
         proxy: Optional[str] = None,
         debug: bool = False,
+        auto_refresh_cookies: bool = True,
         client: Optional[GeminiWebClient] = None,
     ):
         self.cookies_dir = Path(cookies_dir)
@@ -26,6 +27,7 @@ class Gemini:
         self.language = language
         self.proxy = proxy
         self.debug = debug
+        self.auto_refresh_cookies = auto_refresh_cookies
         self._client = client or GeminiWebClient()
 
     async def astream_chat(
@@ -49,6 +51,7 @@ class Gemini:
             images=image_paths,
             proxy=proxy if proxy is not None else self.proxy,
             debug=debug if debug is not None else self.debug,
+            auto_refresh_cookies=self.auto_refresh_cookies,
         )
 
     async def achat(
