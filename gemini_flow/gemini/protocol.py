@@ -34,7 +34,7 @@ MODEL_HEADERS: Dict[str, Dict[str, str]] = {
     "gemini-3-pro-thinking": {
         "x-goog-ext-525001261-jspb": '[1,null,null,null,"e051ce1aa80aa576",null,null,0,[4],null,null,2]'
     },
-    "gemini-3-pro-2": {
+    "gemini-3-pro-new": {
         "x-goog-ext-525001261-jspb": '[1,null,null,null,"e6fa609c3fa255c0",null,null,0,[4],null,null,2]'
     },
     "gemini-3-pro": {

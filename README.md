@@ -62,5 +62,7 @@ The cookies directory should contain one or more `*.json` files exported from Ch
 Each file must be a JSON list of objects including at least: `domain`, `name`, `value`.
 
 ## Notes
-- If you see `SNlM0e token not found`, your cookies are likely expired or you were redirected to a login/consent page.
- 
+- If you see `SNlM0e token not found`, your cookies are likely expired.
+```
+chrome.exe --user-data-dir="C:\...\GeminiFlow\user_cookies\.pw-profile"
+```
