@@ -70,7 +70,7 @@ async def _run_gemini_stream(*, payload: dict[str, Any]):
     images = _parse_images(payload)
 
     ai = Gemini(
-        model=model or "gemini-2.5-pro",
+        model=model or "gemini-3-pro",
         language=language or "zh-TW",
         auto_refresh_cookies=auto_refresh_cookies,
     )
@@ -105,9 +105,11 @@ async def chat(request: web.Request) -> web.Response:
     try:
         async for chunk in stream:
             if isinstance(chunk, str) and chunk.startswith("[image saved] "):
-                path = chunk[len("[image saved] ") :].strip()
-                if path:
-                    images_saved.append(path)
+                continue
+            if isinstance(chunk, str) and chunk.startswith("[image url] "):
+                url = chunk[len("[image url] ") :].strip()
+                if url:
+                    images_saved.append(url)
                 continue
             text_parts.append(str(chunk))
     except Exception as e:
@@ -143,6 +145,9 @@ async def stream(request: web.Request) -> web.StreamResponse:
             if isinstance(chunk, str) and chunk.startswith("[image saved] "):
                 path = chunk[len("[image saved] ") :].strip()
                 await resp.write(_sse_format(event="image", data={"path": path}))
+            elif isinstance(chunk, str) and chunk.startswith("[image url] "):
+                url = chunk[len("[image url] ") :].strip()
+                await resp.write(_sse_format(event="image", data={"url": url}))
             else:
                 await resp.write(_sse_format(event="text", data={"chunk": str(chunk)}))
 

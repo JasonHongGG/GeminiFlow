@@ -15,7 +15,7 @@ class Gemini:
         self,
         *,
         cookies_dir: PathLike = "user_cookies",
-        model: str = "gemini-2.5-pro",
+        model: str = "gemini-3-pro",
         language: str = "zh-TW",
         proxy: Optional[str] = None,
         debug: bool = False,

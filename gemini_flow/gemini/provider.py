@@ -262,6 +262,7 @@ class GeminiWebProvider(ChatProvider):
                 emitted_any = True
                 if saved:
                     yield f"[image saved] {saved}\n"
+                    yield f"[image url] {final_image_candidate}\n"
                 else:
                     yield f"[image] {final_image_candidate}\n"
 

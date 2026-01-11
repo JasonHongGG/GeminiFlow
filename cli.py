@@ -21,7 +21,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     chat = sub.add_parser("chat", help="Send a prompt and stream text output")
     chat.add_argument("prompt", help="User prompt")
-    chat.add_argument("-m", "--model", default="gemini-2.5-pro", choices=sorted(MODEL_HEADERS.keys()))
+    chat.add_argument("-m", "--model", default="gemini-3-pro", choices=sorted(MODEL_HEADERS.keys()))
     chat.add_argument("-c", "--cookies-dir", type=Path, required=True)
     chat.add_argument(
         "--image",
