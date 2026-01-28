@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Callable, Optional, Sequence, Union
+from typing import Callable, Optional, Sequence, Tuple, Union
 
 from .gemini.client import GeminiWebClient
 
 
 PathLike = Union[str, Path]
+ImageInput = Union[PathLike, Tuple[bytes, str]]
 
 
 class Gemini:
@@ -35,23 +36,30 @@ class Gemini:
         prompt: str,
         *,
         model: Optional[str] = None,
-        images: Optional[Sequence[PathLike]] = None,
+        images: Optional[Sequence[ImageInput]] = None,
         language: Optional[str] = None,
         proxy: Optional[str] = None,
         debug: Optional[bool] = None,
+        save_images: Optional[bool] = None,
     ):
-        image_paths = None
+        image_inputs: Optional[list[ImageInput]] = None
         if images:
-            image_paths = [Path(p) for p in images]
+            image_inputs = []
+            for item in images:
+                if isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)):
+                    image_inputs.append((bytes(item[0]), str(item[1])))
+                else:
+                    image_inputs.append(Path(item))
         return await self._client.chat(
             prompt=prompt,
             model=model or self.model,
             language=language or self.language,
             cookies_dir=self.cookies_dir,
-            images=image_paths,
+            images=image_inputs,
             proxy=proxy if proxy is not None else self.proxy,
             debug=debug if debug is not None else self.debug,
             auto_refresh_cookies=self.auto_refresh_cookies,
+            save_images=True if save_images is None else save_images,
         )
 
     async def achat(
@@ -59,10 +67,11 @@ class Gemini:
         prompt: str,
         *,
         model: Optional[str] = None,
-        images: Optional[Sequence[PathLike]] = None,
+        images: Optional[Sequence[ImageInput]] = None,
         language: Optional[str] = None,
         proxy: Optional[str] = None,
         debug: Optional[bool] = None,
+        save_images: Optional[bool] = None,
     ) -> str:
         stream = await self.astream_chat(
             prompt,
@@ -71,6 +80,7 @@ class Gemini:
             language=language,
             proxy=proxy,
             debug=debug,
+            save_images=save_images,
         )
         parts: list[str] = []
         async for chunk in stream:
@@ -82,11 +92,12 @@ class Gemini:
         prompt: str,
         *,
         model: Optional[str] = None,
-        images: Optional[Sequence[PathLike]] = None,
+        images: Optional[Sequence[ImageInput]] = None,
         language: Optional[str] = None,
         proxy: Optional[str] = None,
         debug: Optional[bool] = None,
         on_chunk: Optional[Callable[[str], None]] = None,
+        save_images: Optional[bool] = None,
     ) -> str:
         async def _run() -> str:
             stream = await self.astream_chat(
@@ -96,6 +107,7 @@ class Gemini:
                 language=language,
                 proxy=proxy,
                 debug=debug,
+                save_images=save_images,
             )
             parts: list[str] = []
             async for chunk in stream:

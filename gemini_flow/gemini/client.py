@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Tuple, Union
 
 from ..cookies import load_google_cookies
 from ..playwright_cookies import ensure_playwright_cookies
@@ -26,10 +26,11 @@ class GeminiWebClient:
         model: str,
         language: str = "zh-TW",
         cookies_dir: Path,
-        images: Optional[Sequence[Path]] = None,
+        images: Optional[Sequence[Union[Path, Tuple[bytes, str]]]] = None,
         proxy: Optional[str] = None,
         debug: bool = False,
         auto_refresh_cookies: bool = True,
+        save_images: bool = True,
     ) -> AsyncTextStream:
         async def _refresh_cookies() -> None:
             await ensure_playwright_cookies(
@@ -47,10 +48,17 @@ class GeminiWebClient:
                 return load_google_cookies(cookies_dir)
 
         cookies = await _load_or_refresh()
-        image_payload = None
+        image_payload: Optional[list[Tuple[bytes, str]]] = None
         if images:
             image_payload = []
-            for path in images:
+            for item in images:
+                if isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)):
+                    data = bytes(item[0])
+                    name = str(item[1]) if item[1] else "image.bin"
+                    image_payload.append((data, name))
+                    continue
+
+                path = Path(item)
                 data = path.read_bytes()
                 image_payload.append((data, path.name))
 
@@ -63,6 +71,7 @@ class GeminiWebClient:
                 language=language,
                 proxy=proxy,
                 debug=debug,
+                save_images=save_images,
             )
         except Exception:
             if not auto_refresh_cookies:
@@ -79,4 +88,5 @@ class GeminiWebClient:
                 language=language,
                 proxy=proxy,
                 debug=debug,
+                save_images=save_images,
             )

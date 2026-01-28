@@ -60,6 +60,7 @@ class GeminiWebProvider(ChatProvider):
         language: str = "zh-TW",
         proxy: Optional[str] = None,
         debug: bool = False,
+        save_images: bool = True,
     ) -> AsyncTextStream:
         if REQUIRED_COOKIE_NAME not in cookies:
             raise MissingAuthError(f"Missing required cookie: {REQUIRED_COOKIE_NAME}")
@@ -83,7 +84,12 @@ class GeminiWebProvider(ChatProvider):
             uploads=uploads,
         )
 
-        is_image_model = model.endswith("-image")
+        normalized_model = model.strip().lower()
+        is_image_model = (
+            normalized_model.endswith("-image")
+            or normalized_model.endswith("-image-preview")
+            or "-image-" in normalized_model
+        )
 
         _CONTROL_RE = re.compile(r"[\x00-\x1F\x7F\u200B\u200C\u200D\uFEFF]")
 
@@ -98,6 +104,13 @@ class GeminiWebProvider(ChatProvider):
                 return True
             # Echoed input/uploaded image reference (not the generated output).
             if "lh3.googleusercontent.com/gg/" in url and "lh3.googleusercontent.com/gg-dl/" not in url:
+                return True
+            return False
+
+        def _is_output_image_url(url: str) -> bool:
+            if url.startswith("data:image/"):
+                return True
+            if "lh3.googleusercontent.com/gg-dl/" in url:
                 return True
             return False
 
@@ -144,6 +157,7 @@ class GeminiWebProvider(ChatProvider):
                         "image/png": "png",
                         "image/jpeg": "jpg",
                         "image/webp": "webp",
+                        "image/svg+xml": "svg",
                     }.get(mime, "png")
                     data = base64.b64decode(b64)
                 except Exception:
@@ -169,6 +183,7 @@ class GeminiWebProvider(ChatProvider):
                 "image/png": "png",
                 "image/jpeg": "jpg",
                 "image/webp": "webp",
+                "image/svg+xml": "svg",
             }.get(content_type, "png")
             out_path = out_dir / f"{suffix}.{ext}"
             out_path.write_bytes(data)
@@ -180,6 +195,7 @@ class GeminiWebProvider(ChatProvider):
             buffer = ""
             last_content = ""
             final_image_candidate: Optional[str] = None
+            fallback_image_candidate: Optional[str] = None
             out_dir = _get_image_output_dir() if is_image_model else Path.cwd()
             out_prefix = f"gemini_{model}_{int(time.time())}"
             out_index = 0
@@ -216,10 +232,15 @@ class GeminiWebProvider(ChatProvider):
                                 if is_image_model:
                                     for candidate in extract_image_candidates_from_raw_line(raw_line):
                                         normalized = _normalize_candidate(candidate)
-                                        if not normalized or _is_placeholder_or_input_image(normalized):
+                                        if not normalized:
                                             continue
-                                        # Keep only the latest candidate; save once at the end.
-                                        final_image_candidate = normalized
+                                        if _is_placeholder_or_input_image(normalized):
+                                            if fallback_image_candidate is None:
+                                                fallback_image_candidate = normalized
+                                            continue
+                                        if _is_output_image_url(normalized):
+                                            # Keep only the latest output candidate; save once at the end.
+                                            final_image_candidate = normalized
 
                                 delta, last_content = extract_text_delta_from_raw_line(
                                     raw_line, last_content
@@ -238,9 +259,14 @@ class GeminiWebProvider(ChatProvider):
                 if is_image_model:
                     for candidate in extract_image_candidates_from_raw_line(raw_line):
                         normalized = _normalize_candidate(candidate)
-                        if not normalized or _is_placeholder_or_input_image(normalized):
+                        if not normalized:
                             continue
-                        final_image_candidate = normalized
+                        if _is_placeholder_or_input_image(normalized):
+                            if fallback_image_candidate is None:
+                                fallback_image_candidate = normalized
+                            continue
+                        if _is_output_image_url(normalized):
+                            final_image_candidate = normalized
 
                 delta, last_content = extract_text_delta_from_raw_line(raw_line, last_content)
                 if delta:
@@ -249,22 +275,29 @@ class GeminiWebProvider(ChatProvider):
                         yield delta
 
             if is_image_model and final_image_candidate:
-                out_index += 1
-                # NOTE: At this point the streaming client session has been closed.
-                # Use a fresh session for downloading the final image.
-                async with aiohttp.ClientSession(headers=DEFAULT_HEADERS, cookies=cookies) as download_client:
-                    saved = await _save_image_candidate(
-                        client=download_client,
-                        candidate=final_image_candidate,
-                        out_dir=out_dir,
-                        suffix=f"{out_prefix}_{out_index}",
-                    )
-                emitted_any = True
-                if saved:
-                    yield f"[image saved] {saved}\n"
-                    yield f"[image url] {final_image_candidate}\n"
+                if save_images:
+                    out_index += 1
+                    # NOTE: At this point the streaming client session has been closed.
+                    # Use a fresh session for downloading the final image.
+                    async with aiohttp.ClientSession(headers=DEFAULT_HEADERS, cookies=cookies) as download_client:
+                        saved = await _save_image_candidate(
+                            client=download_client,
+                            candidate=final_image_candidate,
+                            out_dir=out_dir,
+                            suffix=f"{out_prefix}_{out_index}",
+                        )
+                    emitted_any = True
+                    if saved:
+                        yield f"[image saved] {saved}\n"
+                        yield f"[image url] {final_image_candidate}\n"
+                    else:
+                        yield f"[image] {final_image_candidate}\n"
                 else:
-                    yield f"[image] {final_image_candidate}\n"
+                    emitted_any = True
+                    yield f"[image url] {final_image_candidate}\n"
+            elif is_image_model and fallback_image_candidate:
+                emitted_any = True
+                yield f"[image] {fallback_image_candidate}\n"
 
             if not emitted_any:
                 if debug and preview:

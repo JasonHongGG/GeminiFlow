@@ -18,5 +18,6 @@ class ChatProvider(ABC):
         language: str = "zh-TW",
         proxy: Optional[str] = None,
         debug: bool = False,
+        save_images: bool = True,
     ) -> AsyncTextStream:
         raise NotImplementedError
